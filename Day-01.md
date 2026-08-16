@@ -38,7 +38,7 @@ Core Problems Solved by IaC :
 
 Terraform differs from AWS CloudFormation, Ansible, and Pulumi primarily in its combination of cloud-agnostic flexibility, use of a domain-specific declarative language (HCL), and its primary focus on infrastructure provisioning over software configuration. While all four are Infrastructure as Code (IaC) tools, they target different stages of deployment, languages, and cloud environments.
 
-# Core Structural Differences
+Core Structural Differences
 
 | Feature | Terraform | AWS CloudFormation | Ansible | Pulumi |
 | :--- | :--- | :--- | :--- | :--- |
