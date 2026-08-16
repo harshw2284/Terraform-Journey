@@ -59,7 +59,7 @@ Terraform is declarative because you write code describing the final infrastruct
 
 ---
 
-### ✅ Task 2 : Create a Headless Service
+### ✅ Task 2 : Install Terraform and Configure AWS
 
 1. Install Terraform:
 ```bash
@@ -97,136 +97,69 @@ You should see your AWS account ID and ARN.
 
 ---
 
-### ✅ Task 3 : Create a StatefulSet
+### ✅ Task 3 : Your First Terraform Config -- Create an S3 Bucket
 
-1. Write a StatefulSet manifest with `serviceName` pointing to your Headless Service
+Create a project directory and write your first Terraform config:
 
-```yml
-apiVersion: apps/v1
-kind: StatefulSet
-metadata:
-  name: web
-spec:
-  selector:
-    matchLabels:
-      app: web
-  serviceName: web-service
+```bash
+mkdir terraform-basics && cd terraform-basics
 ```
 
-2. Set replicas to 3, use the nginx image
+Create a file called `main.tf` with:
+1. A `terraform` block with `required_providers` specifying the `aws` provider
+2. A `provider "aws"` block with your region
+3. A `resource "aws_s3_bucket"` that creates a bucket with a globally unique name
 
-```yml
-apiVersion: apps/v1
-kind: StatefulSet
-metadata:
-  name: web
-spec:
-  selector:
-    matchLabels:
-      app: web
-  serviceName: web-service
-  replicas: 3
+```hcl
+terraform {
+  required_providers {
+    aws = {
+      source  = "hashicorp/aws"
+    }
+  }
+}
 
-  template:
-    metadata:
-      labels:
-        app: web
-    spec:
-      containers:
-      - name: nginx
-        image: nginx:1.25
-        ports:
-        - containerPort: 80
-          name: web
+provider "aws" {
+    region = "us-east-2"
+}
+
+resource aws_s3_bucket my-bucket {
+    bucket = "terra-bucket-hwb"
+}
 ```
 
-3. Add a `volumeClaimTemplates` section requesting 100Mi of ReadWriteOnce storage
-
-```yml
-apiVersion: apps/v1
-kind: StatefulSet
-metadata:
-  name: web
-spec:
-  selector:
-    matchLabels:
-      app: web
-  serviceName: web-service
-  replicas: 3
-
-  template:
-    metadata:
-      labels:
-        app: web
-    spec:
-      containers:
-      - name: nginx
-        image: nginx:1.25
-        ports:
-        - containerPort: 80
-          name: web
-        volumeMounts:
-        - name: web-data
-          mountPath: /usr/share/nginx/html
-
-  volumeClaimTemplates:
-  - metadata:
-      name: web-data
-    spec:
-      accessModes: [ "ReadWriteOnce" ]
-      storageClassName: standard
-      resources:
-        requests:
-          storage: 100Mi
+Run the Terraform lifecycle:
+```bash
+terraform init      # Download the AWS provider
+terraform plan      # Preview what will be created
+terraform apply     # Create the bucket (type 'yes' to confirm)
 ```
 
-4. Apply and watch: `kubectl get pods -l <your-label> -w`
+Go to the AWS S3 console and verify your bucket exists.
 
-Observe ordered creation — `web-0` first, then `web-1` after `web-0` is Ready, then `web-2`.
+**Document:** What did `terraform init` download? What does the `.terraform/` directory contain ?
 
-Check the PVCs: `kubectl get pvc` — you should see `web-data-web-0`, `web-data-web-1`, `web-data-web-2` (names follow the pattern `<template-name>-<pod-name>`).
-
-
-Verify: What are the exact pod names and PVC names?
-
-Pod names are :
-
-* web-0
-* web-1
-* web-2
-
-PVC names are :
-
-* web-data-web-0
-* web-data-web-1
-* web-data-web-2
+When you run `terraform init`, it primarily downloads provider plugins and external modules required by your configuration, storing them locally in a hidden `.terraform` directory. it contains local cache data required for your workspace, including downloaded provider plugins, remote module copies, current workspace settings, and backend migration metadata
 
 ---
 
-### ✅ Task 4 : Stable Network Identity
+### ✅ Task 4 : Add an EC2 Instance
 
-Each StatefulSet pod gets a DNS name: `<pod-name>.<service-name>.<namespace>.svc.cluster.local`
+In the same `main.tf`, add:
+1. A `resource "aws_instance"` using AMI `ami-0f5ee92e2d63afc18` (Amazon Linux 2 in ap-south-1 -- use the correct AMI for your region)
+2. Set instance type to `t2.micro`
+3. Add a tag: `Name = "TerraWeek-Day1"`
 
-1. Run a temporary busybox pod and use `nslookup` to resolve `web-0.<your-headless-service>.default.svc.cluster.local`
-
+Run:
 ```bash
-kubectl run busybox --image=busybox:1.36 --restart=Never -it --rm -- sh
-
-nslookup web-0.web-service.default.svc.cluster.local
+terraform plan      # You should see 1 resource to add (bucket already exists)
+terraform apply
 ```
 
-2. Do the same for `web-1` and `web-2`
+Go to the AWS EC2 console and verify your instance is running with the correct name tag.
 
-```bash
-nslookup web-1.web-service.default.svc.cluster.local
-nslookup web-2.web-service.default.svc.cluster.local
-```
+**Document:** How does Terraform know the S3 bucket already exists and only the EC2 instance needs to be created?
 
-3. Confirm the IPs match `kubectl get pods -o wide`
-
-Verify: Does the nslookup IP match the pod IP ?
-
-Yes ! Both nslookup IP and pod IP matched.
 
 ---
 
