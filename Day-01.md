@@ -126,6 +126,7 @@ provider "aws" {
 resource aws_s3_bucket my-bucket {
     bucket = "terra-bucket-hwb"
 }
+
 ```
 
 Run the Terraform lifecycle:
@@ -150,6 +151,33 @@ In the same `main.tf`, add:
 2. Set instance type to `t2.micro`
 3. Add a tag: `Name = "TerraWeek-Day1"`
 
+```hcl
+terraform {
+  required_providers {
+    aws = {
+      source  = "hashicorp/aws"
+    }
+  }
+}
+
+provider "aws" {
+    region = "us-east-2"
+}
+
+resource aws_s3_bucket my-bucket {
+    bucket = "terra-bucket-hwb"
+}
+
+resource "aws_instance" "my-instance" {
+    ami = "ami-048f644e868baa0e8"
+    instance_type = "t2.micro"  
+    tags = {
+        Name = "TerraWeek-Day1"
+    }
+}
+
+```
+
 Run:
 ```bash
 terraform plan      # You should see 1 resource to add (bucket already exists)
@@ -158,67 +186,108 @@ terraform apply
 
 Go to the AWS EC2 console and verify your instance is running with the correct name tag.
 
-**Document:** How does Terraform know the S3 bucket already exists and only the EC2 instance needs to be created?
+**Document:** How does Terraform know the S3 bucket already exists and only the EC2 instance needs to be created ?
+
+Terraform knows the S3 bucket exists through its state file (terraform.tfstate), which tracks all managed resources and their real-world metadata.
+
+When you run terraform plan or terraform apply, Terraform performs a three-way comparison:
+
+* **State File Check**: It looks up terraform.tfstate to see what resources were created during previous runs.
+
+* **Provider Refresh**: It queries the AWS API to confirm the S3 bucket is still present and matches the recorded state.
+
+* **Configuration Drift Analysis**: It compares your updated main.tf against the refreshed state file:
 
 
 ---
 
-### ✅ Task 5 : Stable Storage — Data Survives Pod Deletion
+### ✅ Task 5 : Understand the State File
 
-1. Write unique data to each pod: `kubectl exec web-0 -- sh -c "echo 'Data from web-0' > /usr/share/nginx/html/index.html"`
+Terraform tracks everything it creates in a state file. Time to inspect it.
 
-2. Delete `web-0`: `kubectl delete pod web-0`
-
-3. Wait for it to come back, then check the data — it should still be "Data from web-0"
-
-The new pod reconnected to the same PVC.
-
-Verify: Is the data identical after pod recreation ?
-
-Yes ! Data is identical.
-
----
-
-### ✅ Task 6 : Ordered Scaling
-
-1. Scale up to 5: `kubectl scale statefulset web --replicas=5` — pods create in order (web-3, then web-4)
-
-2. Scale down to 3 — pods terminate in reverse order (web-4, then web-3)
-
+1. Open `terraform.tfstate` in your editor -- read the JSON structure
+2. Run these commands and document what each returns:
 ```bash
-kubectl scale statefulset web --replicas=3
+terraform show                          # Human-readable view of current state
+terraform state list                    # List all resources Terraform manages
+terraform state show aws_s3_bucket.<name>   # Detailed view of a specific resource
+terraform state show aws_instance.<name>
 ```
 
-3. Check `kubectl get pvc` — all five PVCs still exist. Kubernetes keeps them on scale-down so data is preserved if you scale back up.
+3. Answer these questions in your notes:
+   - What information does the state file store about each resource ?
 
-Verify: After scaling down, how many PVCs exist ?
+     The Terraform state file stores a JSON-formatted mapping between your resource configurations and real-world infrastructure objects. For each resource, it records unique identifiers,         current attribute values, dependency relationships, and provider metadata to track real infrastructure status and plan future changes
+     
+   - Why should you never manually edit the state file ?
 
-After scaling down, 5 PVCs exist.
+     because it is a highly structured JSON document that requires strict formatting, and even minor errors can corrupt your entire infrastructure deployment. Terraform relies on absolute         precision to track your real-world resources safely.
+     
+   - Why should the state file not be committed to Git ?
+
+     because it poses severe security risks, breaks team collaboration, and causes merge conflicts. Version control systems are designed for code, whereas the state file functions as a            dynamic database.
+
+---
+
+### ✅ Task 6 : Modify, Plan, and Destroy
+
+1. Change the EC2 instance tag from `"TerraWeek-Day1"` to `"TerraWeek-Modified"` in your `main.tf`
+
+```hcl
+terraform {
+  required_providers {
+    aws = {
+      source  = "hashicorp/aws"
+    }
+  }
+}
+
+provider "aws" {
+    region = "us-east-2"
+}
+
+resource aws_s3_bucket my-bucket {
+    bucket = "terra-bucket-hwb"
+}
+
+resource "aws_instance" "my-instance" {
+    ami = "ami-048f644e868baa0e8"
+    instance_type = "t2.micro"  
+    tags = {
+        Name = "TerraWeek-Modified"
+    }
+}
+```
+
+2. Run `terraform plan` and read the output carefully:
+   - What do the `~`, `+`, and `-` symbols mean ?
+   - In the output of terraform plan, these symbols indicate the planned changes Terraform will make to your infrastructure:
+
+     + (Add): Terraform will create a brand new resource or attribute that does not currently exist in your target environment.
+
+     - (Destroy): Terraform will delete/destroy an existing resource or remove a specific attribute from state.
+
+     ~ (Update in-place): Terraform will modify an existing resource in-place without destroying and recreating it.
+
+   - Is this an in-place update or a destroy-and-recreate ?
+   - Changing the EC2 instance tag from "TerraWeek-Day1" to "TerraWeek-Modified" is an in-place update (~).
+
+     Updating tags in AWS EC2 only modifies the resource's metadata, so Terraform updates the instance without interrupting or recreating it.
+     
+4. Apply the change
+5. Verify the tag changed in the AWS console
+6. Finally, destroy everything:
+```bash
+terraform destroy
+```
+6. Verify in the AWS console -- both the S3 bucket and EC2 instance should be gone
 
 ---
 
-### ✅ Task 7 : Clean Up
-
-1. Delete the StatefulSet and the Headless Service
-
-2. Check `kubectl get pvc` — PVCs are still there (safety feature)
-
-3. Delete PVCs manually
-
-Verify: Were PVCs auto-deleted with the StatefulSet ?
-
-No, PVCs are not auto-deleted when you delete a StatefulSet.
-
-This is an intentional Kubernetes safety feature designed to prevent accidental data loss. If you want to remove the storage, you must delete the PVCs manually after deleting the StatefulSet.
-
-**Note**:
-
-* `kubectl get sts` is the short name for StatefulSets
-* `serviceName` must match an existing Headless Service
-* Pod DNS: `<pod-name>.<service-name>.<namespace>.svc.cluster.local`
-* PVC naming: `<template-name>-<statefulset-name>-<ordinal>`
-* Pods create in order (0, 1, 2) and terminate in reverse (2, 1, 0)
-* Scaling down does not delete PVCs — data is preserved
-* Deleting a StatefulSet does not delete PVCs — clean up separately
-
----
+## Note
+- S3 bucket names must be globally unique -- use something like `terraweek-<yourname>-2026`
+- AMI IDs are region-specific -- search "Amazon Linux 2 AMI" in your region's EC2 launch wizard
+- `terraform fmt` auto-formats your `.tf` files -- run it before committing
+- `terraform validate` checks for syntax errors without connecting to AWS
+- The `.terraform/` directory contains downloaded provider plugins
+- Add `*.tfstate`, `*.tfstate.backup`, and `.terraform/` to your `.gitignore`
