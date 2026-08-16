@@ -61,51 +61,39 @@ Terraform is declarative because you write code describing the final infrastruct
 
 ### ✅ Task 2 : Create a Headless Service
 
-1. Write a Service manifest with `clusterIP: None` — this is a Headless Service
+1. Install Terraform:
+```bash
+# macOS
+brew tap hashicorp/tap
+brew install hashicorp/tap/terraform
 
-```yml
-kind: Service
-apiVersion: v1
+# Linux (amd64)
+wget -O - https://apt.releases.hashicorp.com/gpg | sudo gpg --dearmor -o /usr/share/keyrings/hashicorp-archive-keyring.gpg
+echo "deb [signed-by=/usr/share/keyrings/hashicorp-archive-keyring.gpg] https://apt.releases.hashicorp.com $(lsb_release -cs) main" | sudo tee /etc/apt/sources.list.d/hashicorp.list
+sudo apt update && sudo apt install terraform
 
-metadata:
-  name: web-service
-  labels:
-    app: web
-
-spec:
-  clusterIP: None      # Setting this makes a service headless.
-
-  ports:
-    - port: 80
+# Windows
+choco install terraform
 ```
 
-2. Set the selector to match the labels you will use on your StatefulSet pods
-
-```yml
-kind: Service
-apiVersion: v1
-
-metadata:
-  name: web-service
-  labels:
-    app: web
-
-spec:
-  clusterIP: None
-  selector:
-    app: web
-
-  ports:
-    - port: 80
+2. Verify:
+```bash
+terraform -version
 ```
 
-3. Apply it and confirm CLUSTER-IP shows `None`
+3. Install and configure the AWS CLI:
+```bash
+aws configure
+# Enter your Access Key ID, Secret Access Key, default region (e.g., ap-south-1), output format (json)
+```
 
-A Headless Service creates individual DNS entries for each pod instead of load-balancing to one IP. StatefulSets require this.
+4. Verify AWS access:
+```bash
+aws sts get-caller-identity
+```
 
-Verify: What does the CLUSTER-IP column show ?
+You should see your AWS account ID and ARN.
 
-CLUSTER-IP column shows None.
 
 ---
 
