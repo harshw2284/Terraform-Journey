@@ -10,7 +10,7 @@ By the end of today, I will have created real AWS resources using nothing but a 
 
 Before touching the terminal, research and write short notes on:
 
-1. What is Infrastructure as Code (IaC) ? Why does it matter in DevOps ?
+**1. What is Infrastructure as Code (IaC) ? Why does it matter in DevOps ?**
 
 Infrastructure as Code (IaC) is a method where you set up and manage computers, servers, and networks using text files with code instead of manual clicking or physical setup.
 
@@ -22,7 +22,7 @@ Why IaC Matters in DevOps :
 * **Speeds up work**: Teams launch entire data centers in minutes using tools like Terraform or AWS CloudFormation.
 * **Helps scaling**: Systems grow or shrink automatically by updating the code parameters.
 
-2. What problems does IaC solve compared to manually creating resources in the AWS console ?
+**2. What problems does IaC solve compared to manually creating resources in the AWS console ?**
 
 Infrastructure as Code (IaC) solves human error, configuration drift, and scaling limits of the AWS console by using readable text files to create, track, and repeat cloud setups automatically.
 
@@ -34,7 +34,7 @@ Core Problems Solved by IaC :
 * **Slow Scaling**: Setting up multi-region servers by hand takes days. Code deploys them in minutes.
 * **No Reusability**: One-time console clicks cannot be easily copied. Code templates build new environments fast.
 
-3. How is Terraform different from AWS CloudFormation, Ansible, and Pulumi?
+**3. How is Terraform different from AWS CloudFormation, Ansible, and Pulumi ?**
 
 Terraform differs from AWS CloudFormation, Ansible, and Pulumi primarily in its combination of cloud-agnostic flexibility, use of a domain-specific declarative language (HCL), and its primary focus on infrastructure provisioning over software configuration. While all four are Infrastructure as Code (IaC) tools, they target different stages of deployment, languages, and cloud environments.
 
@@ -48,7 +48,7 @@ Terraform differs from AWS CloudFormation, Ansible, and Pulumi primarily in its 
 | **Language Used** | HashiCorp Configuration Language (HCL) | YAML or JSON | YAML (Playbooks) | General-purpose programming languages (TypeScript, Python, Go, etc.) |
 | **State Tracking** | Managed via state files (`terraform.tfstate`) | Managed automatically by AWS backend | Stateless (Discovers live state dynamically) | Managed via Pulumi Service or backend state file |
 
-4. What does it mean that Terraform is "declarative" and "cloud-agnostic"?
+**4. What does it mean that Terraform is "declarative" and "cloud-agnostic" ?** 
 
 Terraform is declarative because you write code describing the final infrastructure you want, and it figures out the steps to build it. It is cloud-agnostic because it uses one workflow and language (HCL) to manage resources across different cloud companies like AWS, Azure, and Google Cloud.
 
