@@ -270,9 +270,9 @@ resource "aws_instance" "my-instance" {
      * `~` (Update in-place): Terraform will modify an existing resource in-place without destroying and recreating it.
 
    - Is this an in-place update or a destroy-and-recreate ?
-    * Changing the EC2 instance tag from "TerraWeek-Day1" to "TerraWeek-Modified" is an in-place update (~).
+     * Changing the EC2 instance tag from "TerraWeek-Day1" to "TerraWeek-Modified" is an in-place update (~).
 
-    * Updating tags in AWS EC2 only modifies the resource's metadata, so Terraform updates the instance without interrupting or recreating it.
+     * Updating tags in AWS EC2 only modifies the resource's metadata, so Terraform updates the instance without interrupting or recreating it.
      
 4. Apply the change
 5. Verify the tag changed in the AWS console
