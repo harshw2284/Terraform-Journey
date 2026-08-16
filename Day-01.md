@@ -263,11 +263,11 @@ resource "aws_instance" "my-instance" {
    - What do the `~`, `+`, and `-` symbols mean ?
    - In the output of terraform plan, these symbols indicate the planned changes Terraform will make to your infrastructure:
 
-     * + (Add): Terraform will create a brand new resource or attribute that does not currently exist in your target environment.
+     * `+` (Add): Terraform will create a brand new resource or attribute that does not currently exist in your target environment.
 
-     * - (Destroy): Terraform will delete/destroy an existing resource or remove a specific attribute from state.
+     * `-` (Destroy): Terraform will delete/destroy an existing resource or remove a specific attribute from state.
 
-     * ~ (Update in-place): Terraform will modify an existing resource in-place without destroying and recreating it.
+     * `~` (Update in-place): Terraform will modify an existing resource in-place without destroying and recreating it.
 
    - Is this an in-place update or a destroy-and-recreate ?
     * Changing the EC2 instance tag from "TerraWeek-Day1" to "TerraWeek-Modified" is an in-place update (~).
