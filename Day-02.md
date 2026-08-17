@@ -1,4 +1,4 @@
-# Terraform – Day 01 - Introduction to Terraform and Your First AWS Infrastructure
+# Terraform – Day 02 - Providers, Resources and Dependencies
 
 Yesterday I created standalone resources. But real infrastructure is connected -- a server lives inside a subnet, a subnet lives inside a VPC, a security group controls what traffic gets in. Today I will build a complete networking stack on AWS and learn how Terraform figures out what to create first.
 
