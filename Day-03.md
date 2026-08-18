@@ -308,9 +308,35 @@ Stop hardcoding the AMI ID. Use a data source to fetch it dynamically.
    - Uses `owners = ["amazon"]`
    - Sets `most_recent = true`
 
+```hcl
+data "aws_ami" "amazon_linux" {
+  owners = ["amazon"]
+  most_recent = true                           # Terraform will search AWS for AMIs matching that name
+
+  filter {
+    name   = "virtualization-type"
+    values = ["hvm"]
+  }
+  filter {
+    name   = "name"
+    values = ["amzn2-ami-hvm-*-x86_64-gp2"]    # The values here is a search pattern, not the AMI ID.
+  }
+  filter {
+    name   = "root-device-type"
+    values = ["gp2"]
+  }
+}
+```
+
 2. Replace the hardcoded AMI in your `aws_instance` with `data.aws_ami.amazon_linux.id`
 
 3. Add a `data "aws_availability_zones"` block to fetch available AZs in your region
+
+```hcl
+data "aws_availability_zones" "available" {
+  state = "available"
+}
+```
 
 4. Use the first AZ in your subnet: `data.aws_availability_zones.available.names[0]`
 
