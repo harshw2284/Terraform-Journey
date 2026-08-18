@@ -72,7 +72,95 @@ variable "extra_tags" {
 
 2. Replace every hardcoded value in `main.tf` with `var.<name>` references
 
+```hcl
+resource aws_vpc my-vpc {
+    cidr_block = var.vpc_cidr
+  tags = merge(
+    {
+    Name = "TerraWeek-VPC"
+    Environment = var.environment
+    Project = var.project_name
+  },
+  var.extra_tags
+  )
+}
 
+resource aws_subnet my-subnet {
+    cidr_block = var.subnet_cidr
+    vpc_id     = aws_vpc.my-vpc.id
+  tags = merge(
+    {
+    Name = "TerraWeek-Public-Subnet"
+    Environment = var.environment
+    Project = var.project_name
+  },
+  var.extra_tags
+  )  
+}
+
+resource aws_internet_gateway my-gateway {
+    vpc_id     = aws_vpc.my-vpc.id
+}
+
+resource aws_route_table my-table {
+    vpc_id     = aws_vpc.my-vpc.id
+    route {
+      cidr_block = "0.0.0.0/0"
+      gateway_id = aws_internet_gateway.my-gateway.id
+    }
+}
+
+resource aws_route_table_association my-rt-as {
+  subnet_id      = aws_subnet.my-subnet.id
+  route_table_id = aws_route_table.my-table.id 
+}
+
+resource aws_security_group my-sg {
+    name        = "TerraWeek-SG"
+    description = "Allow SSH and HTTP inbound traffic"
+    vpc_id      = aws_vpc.my-vpc.id 
+
+    dynamic "ingress" {   
+      for_each = var.allowed_ports
+      content {
+        from_port   = ingress.value
+        protocol    = "tcp"
+        to_port     = ingress.value
+        cidr_blocks = ["0.0.0.0/0"]
+    }
+  }
+
+    egress {
+      from_port   = 0
+      to_port     = 0
+      protocol    = "-1"        # semantically equivalent to all ports
+      cidr_blocks = ["0.0.0.0/0"]     
+    }
+}
+
+resource "aws_instance" "my-instance" {
+  ami = "ami-0e5497a77ef21b5ac"
+  subnet_id = aws_subnet.my-subnet.id
+  instance_type = var.Insatnce_type
+  associate_public_ip_address = true
+  lifecycle {
+    create_before_destroy = true
+  }
+  tags = merge(
+  {
+    Name = "TerraWeek-Server" 
+    Environment = var.environment
+    Project = var.project_name
+  },
+  var.extra_tags 
+ )
+}
+
+resource "aws_s3_bucket" "my-bucket" {
+    bucket = "terra-bucket-hwb"
+    depends_on = [ aws_instance.my-instance ]
+}
+```
 
 3. Run `terraform plan` -- it should prompt you for `project_name` since it has no default
 
@@ -94,7 +182,7 @@ The five core variable types in Terraform are split into primitive (simple) type
 
 ---
 
-### ✅ Task 2 : Install Terraform and Configure AWS
+### ✅ Task 2 : Variable Files and Precedence
 
 1. Create `terraform.tfvars`:
 ```hcl
@@ -135,137 +223,144 @@ terraform plan                              # env var overrides default but not 
 
 **Document:** Write the variable precedence order from lowest to highest priority.
 
----
+In Terraform, variable precedence is evaluated in the following order, from lowest to highest priority (values defined further down the list override values defined above them):
 
-### ✅ Task 3 : Your First Terraform Config -- Create an S3 Bucket
+1. Environment variables (`TF_VAR_variable_name`)
 
-Create a project directory and write your first Terraform config:
+2. `terraform.tfvars` file
 
-```bash
-mkdir terraform-basics && cd terraform-basics
-```
+3. `terraform.tfvars.json` file
 
-Create a file called `main.tf` with:
-1. A `terraform` block with `required_providers` specifying the `aws` provider
-2. A `provider "aws"` block with your region
-3. A `resource "aws_s3_bucket"` that creates a bucket with a globally unique name
+4. `*.auto.tfvars` or `*.auto.tfvars.json` files (processed in alphabetical order by filename)
 
-```hcl
-terraform {
-  required_providers {
-    aws = {
-      source  = "hashicorp/aws"
-    }
-  }
-}
-
-provider "aws" {
-    region = "us-east-2"
-}
-
-resource aws_s3_bucket my-bucket {
-    bucket = "terra-bucket-hwb"
-}
-
-```
-
-Run the Terraform lifecycle:
-```bash
-terraform init      # Download the AWS provider
-terraform plan      # Preview what will be created
-terraform apply     # Create the bucket (type 'yes' to confirm)
-```
-
-Go to the AWS S3 console and verify your bucket exists.
-
-**Document:** What did `terraform init` download? What does the `.terraform/` directory contain ?
-
-When you run `terraform init`, it primarily downloads provider plugins and external modules required by your configuration, storing them locally in a hidden `.terraform` directory. it contains local cache data required for your workspace, including downloaded provider plugins, remote module copies, current workspace settings, and backend migration metadata
+5. `-var` and `-var-file` options specified on the command line (in the exact order they are passed)
 
 ---
 
-### ✅ Task 4 : Add an EC2 Instance
+### ✅ Task 3 : Add Outputs
 
-In the same `main.tf`, add:
-1. A `resource "aws_instance"` using AMI `ami-0f5ee92e2d63afc18` (Amazon Linux 2 in ap-south-1 -- use the correct AMI for your region)
-2. Set instance type to `t2.micro`
-3. Add a tag: `Name = "TerraWeek-Day1"`
+Create an `outputs.tf` file with outputs for:
+
+1. `vpc_id` -- the VPC ID
+2. `subnet_id` -- the public subnet ID
+3. `instance_id` -- the EC2 instance ID
+4. `instance_public_ip` -- the public IP of the EC2 instance
+5. `instance_public_dns` -- the public DNS name
+6. `security_group_id` -- the security group ID
 
 ```hcl
-terraform {
-  required_providers {
-    aws = {
-      source  = "hashicorp/aws"
-    }
-  }
+output "vpc_id" {
+  description = "The ID of the VPC"  
+  value = aws_vpc.my-vpc.id
 }
 
-provider "aws" {
-    region = "us-east-2"
+output "subnet_id" {
+  description = "The ID of the public subnet"
+  value = aws_subnet.my-subnet.id
 }
 
-resource aws_s3_bucket my-bucket {
-    bucket = "terra-bucket-hwb"
+output "instance_id" {
+  description = "The ID of the EC2 instance"
+  value = aws_instance.my-instance.id
 }
 
-resource "aws_instance" "my-instance" {
-    ami = "ami-048f644e868baa0e8"
-    instance_type = "t2.micro"  
-    tags = {
-        Name = "TerraWeek-Day1"
-    }
+output "instance_public_ip" {
+  description = "The public IP address assigned to the EC2 instance"
+  value = aws_instance.my-instance.public_ip
 }
 
+output "instance_public_dns" {
+  description = "The public DNS name assigned to the EC2 instance"
+  value = aws_instance.my-instance.public_dns
+}
+
+output "security_group_id" {
+  description = "The ID of the security group"  
+  value = aws_security_group.my-sg.id
+}
 ```
 
-Run:
+Apply your config and verify the outputs are printed at the end:
 ```bash
-terraform plan      # You should see 1 resource to add (bucket already exists)
 terraform apply
+
+# After apply, you can also run:
+terraform output                          # Show all outputs
+terraform output instance_public_ip       # Show a specific output
+terraform output -json                    # JSON format for scripting
 ```
 
-Go to the AWS EC2 console and verify your instance is running with the correct name tag.
+**Verify:** Does `terraform output instance_public_ip` return the correct IP ?
 
-**Document:** How does Terraform know the S3 bucket already exists and only the EC2 instance needs to be created ?
+<img width="659" height="181" alt="Screenshot 2026-08-18 230905" src="https://github.com/user-attachments/assets/449f4904-7520-489e-8d8d-5f9bb8ae2aa3"/>
 
-Terraform knows the S3 bucket exists through its state file (terraform.tfstate), which tracks all managed resources and their real-world metadata.
-
-When you run terraform plan or terraform apply, Terraform performs a three-way comparison:
-
-* **State File Check**: It looks up terraform.tfstate to see what resources were created during previous runs.
-
-* **Provider Refresh**: It queries the AWS API to confirm the S3 bucket is still present and matches the recorded state.
-
-* **Configuration Drift Analysis**: It compares your updated main.tf against the refreshed state file:
-
+Yes !
 
 ---
 
-### ✅ Task 5 : Understand the State File
+### ✅ Task 4 : Use Data Sources
 
-Terraform tracks everything it creates in a state file. Time to inspect it.
+Stop hardcoding the AMI ID. Use a data source to fetch it dynamically.
 
-1. Open `terraform.tfstate` in your editor -- read the JSON structure
-2. Run these commands and document what each returns:
-```bash
-terraform show                          # Human-readable view of current state
-terraform state list                    # List all resources Terraform manages
-terraform state show aws_s3_bucket.<name>   # Detailed view of a specific resource
-terraform state show aws_instance.<name>
+1. Add a `data "aws_ami"` block that:
+   - Filters for Amazon Linux 2 images
+   - Filters for `hvm` virtualization and `gp2` root device
+   - Uses `owners = ["amazon"]`
+   - Sets `most_recent = true`
+
+2. Replace the hardcoded AMI in your `aws_instance` with `data.aws_ami.amazon_linux.id`
+
+3. Add a `data "aws_availability_zones"` block to fetch available AZs in your region
+
+4. Use the first AZ in your subnet: `data.aws_availability_zones.available.names[0]`
+
+Apply and verify -- your config now works in any region without changing the AMI.
+
+**Document:** What is the difference between a `resource` and a `data` source?
+
+A resource and a data source serve opposite roles regarding infrastructure lifecycle management in Terraform:
+
+* **Resource** (`resource`): Creates, updates, or deletes infrastructure components (e.g., an EC2 instance, VPC, or S3 bucket). Terraform directly manages the lifecycle and state of these objects.
+
+**Data Source** (`data`): Reads or fetches read-only information about existing infrastructure created outside the current Terraform workspace or configuration (e.g., querying the latest official AMI ID or existing VPCs). Terraform does not create, modify, or destroy data sources.
+
+| Feature | Resource (`resource`) | Data Source (`data`) |
+| :--- | :--- | :--- |
+| **Primary Purpose** | Provision and manage infrastructure lifecycle | Query and read existing infrastructure data |
+| **Action** | Creates, modifies, or destroys real-world objects | Read-only lookup |
+| **Management** | Full lifecycle management via `terraform destroy` / `apply` | Never modified or deleted by Terraform |
+| **Example Use Case** | Deploying a new `aws_instance` | Fetching the latest Amazon Linux 2 AMI ID with `aws_ami` |
+
+---
+
+### ✅ Task 5 : Use Locals for Dynamic Values
+
+1. Add a `locals` block:
+```hcl
+locals {
+  name_prefix = "${var.project_name}-${var.environment}"
+  common_tags = {
+    Project     = var.project_name
+    Environment = var.environment
+    ManagedBy   = "Terraform"
+  }
+}
 ```
 
-3. Answer these questions in your notes:
-   - What information does the state file store about each resource ?
+2. Replace all Name tags with `local.name_prefix`:
+   - VPC: `"${local.name_prefix}-vpc"`
+   - Subnet: `"${local.name_prefix}-subnet"`
+   - Instance: `"${local.name_prefix}-server"`
 
-     The Terraform state file stores a JSON-formatted mapping between your resource configurations and real-world infrastructure objects. For each resource, it records unique identifiers,         current attribute values, dependency relationships, and provider metadata to track real infrastructure status and plan future changes
-     
-   - Why should you never manually edit the state file ?
+3. Merge common tags with resource-specific tags:
+```hcl
+tags = merge(local.common_tags, {
+  Name = "${local.name_prefix}-server"
+})
+```
 
-     because it is a highly structured JSON document that requires strict formatting, and even minor errors can corrupt your entire infrastructure deployment. Terraform relies on absolute         precision to track your real-world resources safely.
-     
-   - Why should the state file not be committed to Git ?
+Apply and check the tags in the AWS console -- every resource should have consistent tagging.
 
-     because it poses severe security risks, breaks team collaboration, and causes merge conflicts. Version control systems are designed for code, whereas the state file functions as a            dynamic database.
 
 ---
 
