@@ -505,56 +505,32 @@ Apply and check the tags in the AWS console -- every resource should have consis
 
 ### ✅ Task 6 : Built-in Functions and Conditional Expressions
 
-1. Change the EC2 instance tag from `"TerraWeek-Day1"` to `"TerraWeek-Modified"` in your `main.tf`
-
-```hcl
-terraform {
-  required_providers {
-    aws = {
-      source  = "hashicorp/aws"
-    }
-  }
-}
-
-provider "aws" {
-    region = "us-east-2"
-}
-
-resource aws_s3_bucket my-bucket {
-    bucket = "terra-bucket-hwb"
-}
-
-resource "aws_instance" "my-instance" {
-    ami = "ami-048f644e868baa0e8"
-    instance_type = "t2.micro"  
-    tags = {
-        Name = "TerraWeek-Modified"
-    }
-}
-```
-
-2. Run `terraform plan` and read the output carefully:
-   - What do the `~`, `+`, and `-` symbols mean ?
-   - In the output of terraform plan, these symbols indicate the planned changes Terraform will make to your infrastructure:
-
-     * `+` (Add): Terraform will create a brand new resource or attribute that does not currently exist in your target environment.
-
-     * `-` (Destroy): Terraform will delete/destroy an existing resource or remove a specific attribute from state.
-
-     * `~` (Update in-place): Terraform will modify an existing resource in-place without destroying and recreating it.
-
-   - Is this an in-place update or a destroy-and-recreate ?
-     * Changing the EC2 instance tag from "TerraWeek-Day1" to "TerraWeek-Modified" is an in-place update (~).
-
-     * Updating tags in AWS EC2 only modifies the resource's metadata, so Terraform updates the instance without interrupting or recreating it.
-     
-4. Apply the change
-5. Verify the tag changed in the AWS console
-6. Finally, destroy everything:
+Practice these in `terraform console`:
 ```bash
-terraform destroy
+terraform console
 ```
-6. Verify in the AWS console -- both the S3 bucket and EC2 instance should be gone
+
+1. **String functions:**
+   - `upper("terraweek")` -> `"TERRAWEEK"`
+   - `join("-", ["terra", "week", "2026"])` -> `"terra-week-2026"`
+   - `format("arn:aws:s3:::%s", "my-bucket")`
+
+2. **Collection functions:**
+   - `length(["a", "b", "c"])` -> `3`
+   - `lookup({dev = "t2.micro", prod = "t3.small"}, "dev")` -> `"t2.micro"`
+   - `toset(["a", "b", "a"])` -> removes duplicates
+
+3. **Networking function:**
+   - `cidrsubnet("10.0.0.0/16", 8, 1)` -> `"10.0.1.0/24"`
+
+4. **Conditional expression** -- add this to your config:
+```hcl
+instance_type = var.environment == "prod" ? "t3.small" : "t2.micro"
+```
+
+Apply with `environment = "prod"` and verify the instance type changes.
+
+**Document:** Pick five functions you find most useful and explain what each does.
 
 ---
 
