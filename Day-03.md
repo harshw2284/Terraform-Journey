@@ -385,12 +385,125 @@ tags = merge(local.common_tags, {
 })
 ```
 
+```hcl
+data "aws_availability_zones" "available" {
+  state = "available"
+}
+
+data "aws_ami" "amazon_linux" {
+  owners = ["amazon"]
+  most_recent = true                           # Terraform will search AWS for AMIs matching that name
+
+  filter {
+    name   = "virtualization-type"
+    values = ["hvm"]
+  }
+  filter {
+    name   = "name"
+    values = ["amzn2-ami-hvm-*-x86_64-gp2"]    # The values here is a search pattern, not the AMI ID.
+  }
+  filter {
+    name   = "root-device-type"
+    values = ["ebs"]
+  }
+}
+
+locals {
+  name_prefix = "${var.project_name}-${var.environment}"
+  common_tags = {
+    Project     = var.project_name
+    Environment = var.environment
+    ManagedBy   = "Terraform"
+  }
+}
+
+resource aws_vpc my-vpc {
+    cidr_block = var.vpc_cidr
+  tags = merge(local.common_tags, {
+    Name = "${local.name_prefix}-vpc"
+  },
+  var.extra_tags
+  )
+}
+
+resource aws_subnet my-subnet {
+    cidr_block = var.subnet_cidr
+    vpc_id     = aws_vpc.my-vpc.id
+    availability_zone = data.aws_availability_zones.available.names[0]
+  tags = merge(local.common_tags,{
+    Name = "${local.name_prefix}-subnet"
+  },
+  var.extra_tags
+  )  
+}
+
+resource aws_internet_gateway my-gateway {
+    vpc_id     = aws_vpc.my-vpc.id
+}
+
+resource aws_route_table my-table {
+    vpc_id       = aws_vpc.my-vpc.id
+    route {
+      cidr_block = "0.0.0.0/0"
+      gateway_id = aws_internet_gateway.my-gateway.id
+    }
+}
+
+resource aws_route_table_association my-rt-as {
+  subnet_id      = aws_subnet.my-subnet.id
+  route_table_id = aws_route_table.my-table.id 
+}
+
+resource aws_security_group my-sg {
+    name        = "TerraWeek-SG"
+    description = "Allow SSH and HTTP inbound traffic"
+    vpc_id      = aws_vpc.my-vpc.id 
+    dynamic "ingress" {
+
+      for_each = var.allowed_ports
+      content {
+        from_port   = ingress.value
+        protocol    = "tcp"
+        to_port     = ingress.value
+        cidr_blocks = ["0.0.0.0/0"]
+    }
+  }
+    egress {
+      from_port   = 0
+      to_port     = 0
+      protocol    = "-1"           # semantically equivalent to all ports
+      cidr_blocks = ["0.0.0.0/0"]     
+    }
+}
+
+resource "aws_instance" "my-instance" {
+  ami = data.aws_ami.amazon_linux.id
+  subnet_id = aws_subnet.my-subnet.id
+  instance_type = var.instance_type
+  associate_public_ip_address = true
+  lifecycle {
+    create_before_destroy = true
+  }
+  tags = merge(local.common_tags, {
+    Name = "${local.name_prefix}-server"
+  },
+  var.extra_tags 
+ )
+}
+
+resource "aws_s3_bucket" "my-bucket" {
+    bucket = "terra-bucket-hwb"
+    depends_on = [ aws_instance.my-instance ]
+}
+```
+
 Apply and check the tags in the AWS console -- every resource should have consistent tagging.
 
+<img width="1572" height="690" alt="image" src="https://github.com/user-attachments/assets/ee445881-f2af-4fba-acb3-25cbcda5e3ac" />
 
 ---
 
-### ✅ Task 6 : Modify, Plan, and Destroy
+### ✅ Task 6 : Built-in Functions and Conditional Expressions
 
 1. Change the EC2 instance tag from `"TerraWeek-Day1"` to `"TerraWeek-Modified"` in your `main.tf`
 
@@ -446,9 +559,9 @@ terraform destroy
 ---
 
 ## Note
-- S3 bucket names must be globally unique -- use something like `terraweek-<yourname>-2026`
-- AMI IDs are region-specific -- search "Amazon Linux 2 AMI" in your region's EC2 launch wizard
-- `terraform fmt` auto-formats your `.tf` files -- run it before committing
-- `terraform validate` checks for syntax errors without connecting to AWS
-- The `.terraform/` directory contains downloaded provider plugins
-- Add `*.tfstate`, `*.tfstate.backup`, and `.terraform/` to your `.gitignore`
+- `terraform.tfvars` is loaded automatically. Any other `.tfvars` file needs `-var-file`
+- Variable precedence (low to high): default -> `terraform.tfvars` -> `*.auto.tfvars` -> `-var-file` -> `-var` flag -> `TF_VAR_*` env vars
+- `terraform console` is an interactive REPL for testing expressions and functions
+- Data sources are read-only -- they fetch information, they don't create resources
+- `merge()` combines two maps -- great for tags
+- `terraform output -json` is useful when piping output into other scripts
