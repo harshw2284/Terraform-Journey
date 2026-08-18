@@ -323,7 +323,7 @@ data "aws_ami" "amazon_linux" {
   }
   filter {
     name   = "root-device-type"
-    values = ["gp2"]
+    values = ["ebs"]
   }
 }
 ```
