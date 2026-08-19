@@ -1,543 +1,263 @@
-# Terraform – Day 03 - Variables, Outputs, Data Sources and Expressions
+# Terraform – Day 04 - Terraform State Management and Remote Backends
 
-My Day 2 config works, but it is full of hardcoded values -- region, CIDR blocks, AMI IDs, instance types, tags. Change the region and everything breaks. Today I will make Terraform configs dynamic, reusable, and environment-aware.
+The state file is the single most important thing in Terraform. It is the source of truth -- the map between your `.tf` files and what actually exists in the cloud. Lose it and Terraform forgets everything. Corrupt it and your next apply could destroy production.
 
-This is the difference between a config that works once and a config you can use across projects.
+Today I learned to manage state like a professional -- remote backends, locking, importing existing resources, and handling drift.
 
 ---
 
-### ✅ Task 1: Extract Variables
+### ✅ Task 1: Inspect Your Current State
 
-Take your Day 2 infrastructure config and refactor it:
+Use your Day 3 config (or create a small config with a VPC and EC2 instance). Apply it and then explore the state:
 
-1. Create a `variables.tf` file with input variables for:
-   - `region` (string, default: your preferred region)
-   - `vpc_cidr` (string, default: `"10.0.0.0/16"`)
-   - `subnet_cidr` (string, default: `"10.0.1.0/24"`)
-   - `instance_type` (string, default: `"t2.micro"`)
-   - `project_name` (string, no default -- force the user to provide it)
-   - `environment` (string, default: `"dev"`)
-   - `allowed_ports` (list of numbers, default: `[22, 80, 443]`)
-   - `extra_tags` (map of strings, default: `{}`)
-
-```hcl
-variable "region" {
-    description = "EC2 Insatnce region"
-    default = "us-east-2"
-    type = string
-}
-
-variable "vpc_cidr" {
-    description = "VPC cidr"
-    default = "10.0.0.0/16"
-    type = string
-}
-
-variable "subnet_cidr" {
-    description = "subnet cidr"
-    default = "10.0.1.0/24"
-    type = string
-}
-
-variable "Insatnce_type" {
-    description = "EC2 Insatnce type"
-    default = "t2.micro"
-    type = string
-}
-
-variable "project_name" {
-    description = "Name of project (required)"
-    type = string
-}
-
-variable "environment" {
-    description = "working environment"
-    default = "dev"
-    type = string
-}
-
-variable "allowed_ports" {
-    description = "working environment"
-    default = [22,80,443]
-    type = list(number)
-}
-
-variable "extra_tags" {
-    description = "A map of additional tags to apply to resources"
-    default = {}
-    type = map(string)
-  
-}
+```bash
+terraform show                                    # Full state in human-readable format
+terraform state list                              # All resources tracked by Terraform
+terraform state show aws_instance.<name>          # Every attribute of the instance
+terraform state show aws_vpc.<name>               # Every attribute of the VPC
 ```
 
-2. Replace every hardcoded value in `main.tf` with `var.<name>` references
+Answer:
+1. How many resources does Terraform track?
+
+Terraform tracks every resource defined in your configuration files that has been successfully created or managed via `terraform apply` or added via `terraform import`.
+
+2. What attributes does the state store for an EC2 instance? (hint: way more than what you defined)
+
+In addition to your explicit arguments (like `ami`, `instance_type`, and `tags`), the state captures metadata provided by AWS upon resource creation:
+
+* Identity & Amazon Resource Identifiers
+* Network & Addressing Details: private_ip, public_ip, private_dns, public_dns, etc.
+* Hardware & Location: availability_zone, tenancy, cpu_core_count, etc.
+* State & Status: instance_state (e.g., running) ,password_data, and lifecycle flags, etc.
+* Attached Infrastructure & Devices: root_block_device ,key_name, etc.
+* Computed Metadata: tags_all (combining resource tags with provider-level default tags).
+
+3. Open `terraform.tfstate` in an editor -- find the `serial` number. What does it represent?
+
+In a Terraform state file (`terraform.tfstate`), the `serial` number is an incremental integer that acts as a version counter for the state file itself.
+
+**What It Represents**
+
+* State Lineage & Evolution Tracker: Every time Terraform modifies or updates the state file (e.g., after running `terraform apply`, `terraform refresh`, or state manipulation commands like `terraform state mv`), the `serial` number automatically increments by `1`.
+
+* Conflict Prevention: When using remote state backends (like AWS S3 or Terraform Cloud) or state locking, Terraform uses the `serial` number to ensure it is working with the most up-to-date version of the state and to prevent race conditions or overwriting newer changes with older state data.
+
+**Example**:
+
+If `serial` value is `12` that means the state file has undergone 12 distinct modifications since it was first created (which starts at `serial: 1` or `0`).
+
+---
+
+### ✅ Task 2 : Set Up S3 Remote Backend
+
+Storing state locally is dangerous -- one deleted file and you lose everything. Time to move it to S3.
+
+1. First, create the backend infrastructure (do this manually or in a separate Terraform config):
+```bash
+# Create S3 bucket for state storage
+aws s3api create-bucket \
+  --bucket terraweek-state-<yourname> \
+  --region ap-south-1 \
+  --create-bucket-configuration LocationConstraint=ap-south-1
+
+# Enable versioning (so you can recover previous state)
+aws s3api put-bucket-versioning \
+  --bucket terraweek-state-<yourname> \
+  --versioning-configuration Status=Enabled
+
+# Create DynamoDB table for state locking
+aws dynamodb create-table \
+  --table-name terraweek-state-lock \
+  --attribute-definitions AttributeName=LockID,AttributeType=S \
+  --key-schema AttributeName=LockID,KeyType=HASH \
+  --billing-mode PAY_PER_REQUEST \
+  --region ap-south-1
+```
 
 ```hcl
-resource aws_vpc my-vpc {
-    cidr_block = var.vpc_cidr
-  tags = merge(
-    {
-    Name = "TerraWeek-VPC"
-    Environment = var.environment
-    Project = var.project_name
-  },
-  var.extra_tags
-  )
+resource "aws_s3_bucket" "my_state_bucket" {
+  bucket = "terraweek-state-harsh" 
 }
 
-resource aws_subnet my-subnet {
-    cidr_block = var.subnet_cidr
-    vpc_id     = aws_vpc.my-vpc.id
-  tags = merge(
-    {
-    Name = "TerraWeek-Public-Subnet"
-    Environment = var.environment
-    Project = var.project_name
-  },
-  var.extra_tags
-  )  
-}
-
-resource aws_internet_gateway my-gateway {
-    vpc_id     = aws_vpc.my-vpc.id
-}
-
-resource aws_route_table my-table {
-    vpc_id     = aws_vpc.my-vpc.id
-    route {
-      cidr_block = "0.0.0.0/0"
-      gateway_id = aws_internet_gateway.my-gateway.id
-    }
-}
-
-resource aws_route_table_association my-rt-as {
-  subnet_id      = aws_subnet.my-subnet.id
-  route_table_id = aws_route_table.my-table.id 
-}
-
-resource aws_security_group my-sg {
-    name        = "TerraWeek-SG"
-    description = "Allow SSH and HTTP inbound traffic"
-    vpc_id      = aws_vpc.my-vpc.id 
-
-    dynamic "ingress" {   
-      for_each = var.allowed_ports
-      content {
-        from_port   = ingress.value
-        protocol    = "tcp"
-        to_port     = ingress.value
-        cidr_blocks = ["0.0.0.0/0"]
-    }
+resource "aws_s3_bucket_versioning" "state_versioning" {
+  bucket = aws_s3_bucket.my_state_bucket.id
+  versioning_configuration {
+    status = "Enabled"
   }
-
-    egress {
-      from_port   = 0
-      to_port     = 0
-      protocol    = "-1"        # semantically equivalent to all ports
-      cidr_blocks = ["0.0.0.0/0"]     
-    }
 }
 
-resource "aws_instance" "my-instance" {
-  ami = "ami-0e5497a77ef21b5ac"
-  subnet_id = aws_subnet.my-subnet.id
-  instance_type = var.Insatnce_type
-  associate_public_ip_address = true
-  lifecycle {
-    create_before_destroy = true
+resource "aws_dynamodb_table" "my_state_dbtable" {
+  name           = "terraweek-state-lock"
+  billing_mode   = "PAY_PER_REQUEST"
+  hash_key       = "LockID"
+
+  attribute {
+    name = "LockID"
+    type = "S"
   }
-  tags = merge(
-  {
-    Name = "TerraWeek-Server" 
-    Environment = var.environment
-    Project = var.project_name
-  },
-  var.extra_tags 
- )
-}
-
-resource "aws_s3_bucket" "my-bucket" {
-    bucket = "terra-bucket-hwb"
-    depends_on = [ aws_instance.my-instance ]
 }
 ```
 
-3. Run `terraform plan` -- it should prompt you for `project_name` since it has no default
+2. Add the backend block to your Terraform config:
+```hcl
+terraform {
+  backend "s3" {
+    bucket         = "terraweek-state-<yourname>"
+    key            = "dev/terraform.tfstate"
+    region         = "ap-south-1"
+    use_lockfile   = true
+    encrypt        = true
+  }
+}
+```
 
-**Document:** What are the five variable types in Terraform? (`string`, `number`, `bool`, `list`, `map`)
+3. Run:
+```bash
+terraform init
+```
+Terraform will ask: "Do you want to copy existing state to the new backend?" -- say yes.
 
-The five core variable types in Terraform are split into primitive (simple) types (string, number, bool) and collection types (list, map).
-
-**Primitive Types**
-
-* `string`: A sequence of Unicode characters representing text. It is always wrapped in double quotes (e.g., `"ami-xyz123"` or `"us-east-1"`).
-* `number`: A numeric value that can represent both whole numbers (integers) and fractional values (decimals) (e.g., `3` or `0.0.0.0`).
-* `bool`: A boolean value that can only be `true` or `false`. These are commonly used for conditional logic and feature toggles.
-
-
-**Collection Types**
-
-* `list`: A sequential, ordered collection of values. Items in a list must all share the same data type and are indexed starting at zero (e.g., `["subnet-1", "subnet-2"]`).
-* `map`: A collection of key-value pairs where each unique string key maps to a specific value. All values in a single map must be of the same data type (e.g., `{ env = "production", tier = "frontend" }`).
+4. Verify:
+   - Check the S3 bucket -- you should see `dev/terraform.tfstate`
+   - Your local `terraform.tfstate` should now be empty or gone
+   - Run `terraform plan` -- it should show no changes (state migrated correctly)
 
 ---
 
-### ✅ Task 2 : Variable Files and Precedence
+### ✅ Task 3 : Test State Locking
 
-1. Create `terraform.tfvars`:
-```hcl
-project_name = "terraweek"
-environment  = "dev"
-instance_type = "t2.micro"
-```
+State locking prevents two people from running `terraform apply` at the same time and corrupting the state.
 
-2. Create `prod.tfvars`:
-```hcl
-project_name = "terraweek"
-environment  = "prod"
-instance_type = "t3.small"
-vpc_cidr     = "10.1.0.0/16"
-subnet_cidr  = "10.1.1.0/24"
-```
-
-3. Apply with the default file:
-```bash
-terraform plan                              # Uses terraform.tfvars automatically
-```
-
-4. Apply with the prod file:
-```bash
-terraform plan -var-file="prod.tfvars"      # Uses prod.tfvars
-```
-
-5. Override with CLI:
-```bash
-terraform plan -var="instance_type=t2.nano"  # CLI overrides everything
-```
-
-6. Set an environment variable:
-```bash
-export TF_VAR_environment="staging"
-terraform plan                              # env var overrides default but not tfvars
-```
-
-**Document:** Write the variable precedence order from lowest to highest priority.
-
-In Terraform, variable precedence is evaluated in the following order, from lowest to highest priority (values defined further down the list override values defined above them):
-
-1. Environment variables (`TF_VAR_variable_name`)
-
-2. `terraform.tfvars` file
-
-3. `terraform.tfvars.json` file
-
-4. `*.auto.tfvars` or `*.auto.tfvars.json` files (processed in alphabetical order by filename)
-
-5. `-var` and `-var-file` options specified on the command line (in the exact order they are passed)
-
----
-
-### ✅ Task 3 : Add Outputs
-
-Create an `outputs.tf` file with outputs for:
-
-1. `vpc_id` -- the VPC ID
-2. `subnet_id` -- the public subnet ID
-3. `instance_id` -- the EC2 instance ID
-4. `instance_public_ip` -- the public IP of the EC2 instance
-5. `instance_public_dns` -- the public DNS name
-6. `security_group_id` -- the security group ID
-
-```hcl
-output "vpc_id" {
-  description = "The ID of the VPC"  
-  value = aws_vpc.my-vpc.id
-}
-
-output "subnet_id" {
-  description = "The ID of the public subnet"
-  value = aws_subnet.my-subnet.id
-}
-
-output "instance_id" {
-  description = "The ID of the EC2 instance"
-  value = aws_instance.my-instance.id
-}
-
-output "instance_public_ip" {
-  description = "The public IP address assigned to the EC2 instance"
-  value = aws_instance.my-instance.public_ip
-}
-
-output "instance_public_dns" {
-  description = "The public DNS name assigned to the EC2 instance"
-  value = aws_instance.my-instance.public_dns
-}
-
-output "security_group_id" {
-  description = "The ID of the security group"  
-  value = aws_security_group.my-sg.id
-}
-```
-
-Apply your config and verify the outputs are printed at the end:
+1. Open **two terminals** in the same project directory
+2. In Terminal 1, run:
 ```bash
 terraform apply
-
-# After apply, you can also run:
-terraform output                          # Show all outputs
-terraform output instance_public_ip       # Show a specific output
-terraform output -json                    # JSON format for scripting
 ```
+3. While Terminal 1 is waiting for confirmation, in Terminal 2 run:
+```bash
+terraform plan
+```
+4. Terminal 2 should show a **lock error** with a Lock ID
 
-**Verify:** Does `terraform output instance_public_ip` return the correct IP ?
+**Document:** What is the error message? Why is locking critical for team environments?
 
-<img width="659" height="181" alt="Screenshot 2026-08-18 230905" src="https://github.com/user-attachments/assets/449f4904-7520-489e-8d8d-5f9bb8ae2aa3"/>
-
-Yes !
+5. After the test, if you get stuck with a stale lock:
+```bash
+terraform force-unlock <LOCK_ID>
+```
 
 ---
 
-### ✅ Task 4 : Use Data Sources
+### ✅ Task 4 : Import an Existing Resource
 
-Stop hardcoding the AMI ID. Use a data source to fetch it dynamically.
+Not everything starts with Terraform. Sometimes resources already exist in AWS and you need to bring them under Terraform management.
 
-1. Add a `data "aws_ami"` block that:
-   - Filters for Amazon Linux 2 images
-   - Filters for `hvm` virtualization and `gp2` root device
-   - Uses `owners = ["amazon"]`
-   - Sets `most_recent = true`
+1. Manually create an S3 bucket in the AWS console -- name it `terraweek-import-test-<yourname>`
+2. Write a `resource "aws_s3_bucket"` block in your config for this bucket (just the bucket name, nothing else)
 
 ```hcl
-data "aws_ami" "amazon_linux" {
-  owners = ["amazon"]
-  most_recent = true                           # Terraform will search AWS for AMIs matching that name
-
-  filter {
-    name   = "virtualization-type"
-    values = ["hvm"]
-  }
-  filter {
-    name   = "name"
-    values = ["amzn2-ami-hvm-*-x86_64-gp2"]    # The values here is a search pattern, not the AMI ID.
-  }
-  filter {
-    name   = "root-device-type"
-    values = ["ebs"]
-  }
+resource "aws_s3_bucket" "imported" {
+  bucket = "terraweek-import-test-harsh"
 }
 ```
 
-2. Replace the hardcoded AMI in your `aws_instance` with `data.aws_ami.amazon_linux.id`
-
-3. Add a `data "aws_availability_zones"` block to fetch available AZs in your region
-
-```hcl
-data "aws_availability_zones" "available" {
-  state = "available"
-}
+3. Import it:
+```bash
+terraform import aws_s3_bucket.imported terraweek-import-test-<yourname>
+terraform import aws_s3_bucket.imported terraweek-import-test-harsh
 ```
 
-4. Use the first AZ in your subnet: `data.aws_availability_zones.available.names[0]`
+<img width="1007" height="344" alt="Screenshot 2026-08-19 224358" src="https://github.com/user-attachments/assets/006b3a57-ef84-4de9-931f-3b483afd988c" />
 
-Apply and verify -- your config now works in any region without changing the AMI.
 
-**Document:** What is the difference between a `resource` and a `data` source?
+4. Run `terraform plan`:
+   - If you see "No changes" -- the import was perfect
+   - If you see changes -- your config does not match reality. Update your config to match, then plan again until you get "No changes"
 
-A resource and a data source serve opposite roles regarding infrastructure lifecycle management in Terraform:
+5. Run `terraform state list` -- the imported bucket should now appear alongside your other resources
 
-* **Resource** (`resource`): Creates, updates, or deletes infrastructure components (e.g., an EC2 instance, VPC, or S3 bucket). Terraform directly manages the lifecycle and state of these objects.
+<img width="723" height="102" alt="image" src="https://github.com/user-attachments/assets/7228c3a9-af99-47d8-9fd0-0060a34366c7" />
 
-**Data Source** (`data`): Reads or fetches read-only information about existing infrastructure created outside the current Terraform workspace or configuration (e.g., querying the latest official AMI ID or existing VPCs). Terraform does not create, modify, or destroy data sources.
+**Document:** What is the difference between `terraform import` and creating a resource from scratch?
 
-| Feature | Resource (`resource`) | Data Source (`data`) |
-| :--- | :--- | :--- |
-| **Primary Purpose** | Provision and manage infrastructure lifecycle | Query and read existing infrastructure data |
-| **Action** | Creates, modifies, or destroys real-world objects | Read-only lookup |
-| **Management** | Full lifecycle management via `terraform destroy` / `apply` | Never modified or deleted by Terraform |
-| **Example Use Case** | Deploying a new `aws_instance` | Fetching the latest Amazon Linux 2 AMI ID with `aws_ami` |
+The primary difference lies in where the infrastructure originates and how Terraform associates it with state:
+
+Creating a Resource from Scratch (`terraform apply`):
+You write the HCL configuration block, and Terraform creates a brand-new cloud resource in AWS (or another provider) upon running `terraform apply`. Terraform automatically creates the physical infrastructure and maps it to your state file simultaneously.
+
+Importing an Existing Resource (`terraform import`):
+The cloud resource already exists outside of Terraform management (created manually via AWS Console, CLI, or another tool). Running `terraform import` updates your Terraform state file so Terraform becomes aware of the existing resource and its current attributes. However, `terraform import` does not generate the code for you; you must write the corresponding resource block in your `.tf` file manually so state and configuration match.
 
 ---
 
 ### ✅ Task 5 : Use Locals for Dynamic Values
 
-1. Add a `locals` block:
+Sometimes you need to rename a resource or remove it from state without destroying it in AWS.
+
+1. **Rename a resource in state:**
+```bash
+terraform state list                              # Note the current resource names
+terraform state mv aws_s3_bucket.imported aws_s3_bucket.logs_bucket
+```
+Update your `.tf` file to match the new name. Run `terraform plan` -- it should show no changes.
+
 ```hcl
-locals {
-  name_prefix = "${var.project_name}-${var.environment}"
-  common_tags = {
-    Project     = var.project_name
-    Environment = var.environment
-    ManagedBy   = "Terraform"
-  }
+resource "aws_s3_bucket" "logs_bucket" {
+    bucket = "terraweek-import-test-harsh"
 }
 ```
 
-2. Replace all Name tags with `local.name_prefix`:
-   - VPC: `"${local.name_prefix}-vpc"`
-   - Subnet: `"${local.name_prefix}-subnet"`
-   - Instance: `"${local.name_prefix}-server"`
+2. **Remove a resource from state (without destroying it):**
+```bash
+terraform state rm aws_s3_bucket.logs_bucket
+```
+Run `terraform plan` -- Terraform no longer knows about the bucket, but it still exists in AWS.
 
-3. Merge common tags with resource-specific tags:
-```hcl
-tags = merge(local.common_tags, {
-  Name = "${local.name_prefix}-server"
-})
+3. **Re-import it** to bring it back:
+```bash
+terraform import aws_s3_bucket.logs_bucket terraweek-import-test-<yourname>
 ```
 
-```hcl
-data "aws_availability_zones" "available" {
-  state = "available"
-}
+**Document:** When would you use `state mv` in a real project? When would you use `state rm`?
 
-data "aws_ami" "amazon_linux" {
-  owners = ["amazon"]
-  most_recent = true                           # Terraform will search AWS for AMIs matching that name
-
-  filter {
-    name   = "virtualization-type"
-    values = ["hvm"]
-  }
-  filter {
-    name   = "name"
-    values = ["amzn2-ami-hvm-*-x86_64-gp2"]    # The values here is a search pattern, not the AMI ID.
-  }
-  filter {
-    name   = "root-device-type"
-    values = ["ebs"]
-  }
-}
-
-locals {
-  name_prefix = "${var.project_name}-${var.environment}"
-  common_tags = {
-    Project     = var.project_name
-    Environment = var.environment
-    ManagedBy   = "Terraform"
-  }
-}
-
-resource aws_vpc my-vpc {
-    cidr_block = var.vpc_cidr
-  tags = merge(local.common_tags, {
-    Name = "${local.name_prefix}-vpc"
-  },
-  var.extra_tags
-  )
-}
-
-resource aws_subnet my-subnet {
-    cidr_block = var.subnet_cidr
-    vpc_id     = aws_vpc.my-vpc.id
-    availability_zone = data.aws_availability_zones.available.names[0]
-  tags = merge(local.common_tags,{
-    Name = "${local.name_prefix}-subnet"
-  },
-  var.extra_tags
-  )  
-}
-
-resource aws_internet_gateway my-gateway {
-    vpc_id     = aws_vpc.my-vpc.id
-}
-
-resource aws_route_table my-table {
-    vpc_id       = aws_vpc.my-vpc.id
-    route {
-      cidr_block = "0.0.0.0/0"
-      gateway_id = aws_internet_gateway.my-gateway.id
-    }
-}
-
-resource aws_route_table_association my-rt-as {
-  subnet_id      = aws_subnet.my-subnet.id
-  route_table_id = aws_route_table.my-table.id 
-}
-
-resource aws_security_group my-sg {
-    name        = "TerraWeek-SG"
-    description = "Allow SSH and HTTP inbound traffic"
-    vpc_id      = aws_vpc.my-vpc.id 
-    dynamic "ingress" {
-
-      for_each = var.allowed_ports
-      content {
-        from_port   = ingress.value
-        protocol    = "tcp"
-        to_port     = ingress.value
-        cidr_blocks = ["0.0.0.0/0"]
-    }
-  }
-    egress {
-      from_port   = 0
-      to_port     = 0
-      protocol    = "-1"           # semantically equivalent to all ports
-      cidr_blocks = ["0.0.0.0/0"]     
-    }
-}
-
-resource "aws_instance" "my-instance" {
-  ami = data.aws_ami.amazon_linux.id
-  subnet_id = aws_subnet.my-subnet.id
-  instance_type = var.instance_type
-  associate_public_ip_address = true
-  lifecycle {
-    create_before_destroy = true
-  }
-  tags = merge(local.common_tags, {
-    Name = "${local.name_prefix}-server"
-  },
-  var.extra_tags 
- )
-}
-
-resource "aws_s3_bucket" "my-bucket" {
-    bucket = "terra-bucket-hwb"
-    depends_on = [ aws_instance.my-instance ]
-}
-```
-
-Apply and check the tags in the AWS console -- every resource should have consistent tagging.
-
-<img width="1572" height="690" alt="image" src="https://github.com/user-attachments/assets/ee445881-f2af-4fba-acb3-25cbcda5e3ac" />
+In a real-world production project, you use `terraform state mv` when you want to rename or reorganize code without destroying real infrastructure, while you use `terraform state rm` when you want Terraform to stop managing a resource entirely without deleting it.
 
 ---
 
 ### ✅ Task 6 : Built-in Functions and Conditional Expressions
 
-Practice these in `terraform console`:
+State drift happens when someone changes infrastructure outside of Terraform -- through the AWS console, CLI, or another tool.
+
+1. Apply your full config so everything is in sync
+2. Go to the **AWS console** and manually:
+   - Change the Name tag of your EC2 instance to `"ManuallyChanged"`
+   - Change the instance type if it's stopped (or add a new tag)
+3. Run:
 ```bash
-terraform console
+terraform plan
 ```
+You should see a **diff** -- Terraform detects that reality no longer matches the desired state.
 
-1. **String functions:**
-   - `upper("terraweek")` -> `"TERRAWEEK"`
-   - `join("-", ["terra", "week", "2026"])` -> `"terra-week-2026"`
-   - `format("arn:aws:s3:::%s", "my-bucket")`
+4. You have two choices:
+   - **Option A:** Run `terraform apply` to force reality back to match your config (reconcile)
+   - **Option B:** Update your `.tf` files to match the manual change (accept the drift)
 
-2. **Collection functions:**
-   - `length(["a", "b", "c"])` -> `3`
-   - `lookup({dev = "t2.micro", prod = "t3.small"}, "dev")` -> `"t2.micro"`
-   - `toset(["a", "b", "a"])` -> removes duplicates
+5. Choose Option A -- apply and verify the tags are restored.
 
-3. **Networking function:**
-   - `cidrsubnet("10.0.0.0/16", 8, 1)` -> `"10.0.1.0/24"`
+6. Run `terraform plan` again -- it should show "No changes." Drift resolved.
 
-4. **Conditional expression** -- add this to your config:
-```hcl
-instance_type = var.environment == "prod" ? "t3.small" : "t2.micro"
-```
+**Document:** How do teams prevent state drift in production? (hint: restrict console access, use CI/CD for all changes)
 
-Apply with `environment = "prod"` and verify the instance type changes.
-
-**Document:** Pick five functions you find most useful and explain what each does.
+Teams prevent and manage Terraform state drift in production by strictly locking down cloud console access, automating continuous scheduled drift detection, and enforcing a single GitOps deployment pipeline. Treating version-controlled code as the absolute source of truth stops unauthorized out-of-band modifications.
 
 ---
 
 ## Note
-- `terraform.tfvars` is loaded automatically. Any other `.tfvars` file needs `-var-file`
-- Variable precedence (low to high): default -> `terraform.tfvars` -> `*.auto.tfvars` -> `-var-file` -> `-var` flag -> `TF_VAR_*` env vars
-- `terraform console` is an interactive REPL for testing expressions and functions
-- Data sources are read-only -- they fetch information, they don't create resources
-- `merge()` combines two maps -- great for tags
-- `terraform output -json` is useful when piping output into other scripts
+- S3 bucket names must be globally unique
+- DynamoDB table must have a `LockID` string key -- this is what Terraform uses for locking
+- `terraform init -migrate-state` explicitly triggers state migration
+- `terraform refresh` (or `terraform apply -refresh-only`) updates state to match real infrastructure without making changes
+- State locking only works with backends that support it (S3+DynamoDB, Consul, Terraform Cloud)
+- `terraform force-unlock` should only be used when you are sure no other operation is running
+- Always version your S3 bucket so you can recover a previous state file if something goes wrong
