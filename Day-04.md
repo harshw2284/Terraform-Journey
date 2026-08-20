@@ -191,7 +191,7 @@ The cloud resource already exists outside of Terraform management (created manua
 
 ---
 
-### ✅ Task 5 : Use Locals for Dynamic Values
+### ✅ Task 5 : State Surgery -- mv and rm
 
 Sometimes you need to rename a resource or remove it from state without destroying it in AWS.
 
