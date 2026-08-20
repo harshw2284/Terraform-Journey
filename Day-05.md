@@ -1,4 +1,4 @@
-# Terraform – Day 04 - Terraform State Management and Remote Backends
+# Terraform – Day 05 - Terraform Modules: Build Reusable Infrastructure
 
 I have been writing everything in one big `main.tf` file. That works for learning, but in real teams you manage dozens of environments with hundreds of resources. Copy-pasting configs across projects is a recipe for disaster.
 
