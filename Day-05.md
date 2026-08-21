@@ -338,41 +338,81 @@ terraform apply
 
 ---
 
-### ✅ Task 5 : State Surgery -- mv and rm
+### ✅ Task 5 : Use a Public Registry Module
 
-Sometimes you need to rename a resource or remove it from state without destroying it in AWS.
+Instead of building your own VPC from scratch, use the official module from the Terraform Registry.
 
-1. **Rename a resource in state:**
-```bash
-terraform state list                              # Note the current resource names
-terraform state mv aws_s3_bucket.imported aws_s3_bucket.logs_bucket
-```
-Update your `.tf` file to match the new name. Run `terraform plan` -- it should show no changes.
-
+1. Replace your hand-written VPC resources with:
 ```hcl
-resource "aws_s3_bucket" "logs_bucket" {
-    bucket = "terraweek-import-test-harsh"
+module "vpc" {
+  source  = "terraform-aws-modules/vpc/aws"
+  version = "~> 5.0"
+
+  name = "terraweek-vpc"
+  cidr = "10.0.0.0/16"
+
+  azs             = ["ap-south-1a", "ap-south-1b"]
+  public_subnets  = ["10.0.1.0/24", "10.0.2.0/24"]
+  private_subnets = ["10.0.3.0/24", "10.0.4.0/24"]
+
+  enable_nat_gateway = false
+  enable_dns_hostnames = true
+
+  tags = local.common_tags
 }
 ```
 
-2. **Remove a resource from state (without destroying it):**
-```bash
-terraform state rm aws_s3_bucket.logs_bucket
+2. Update your EC2 and SG module calls to reference `module.vpc.vpc_id` and `module.vpc.public_subnets[0]`
+
+```hcl
+module "web_sg" {
+  source        = "./modules/security-group"
+  vpc_id        = module.vpc.vpc_id           
+  sg_name       = "terraweek-web-sg"
+  ingress_ports = [22, 80, 443]
+  tags          = local.common_tags
+  
+}
+
+module "web_server" {
+  source             = "./modules/ec2-instance"
+  ami_id             = data.aws_ami.amazon_linux.id
+  instance_type      = "t2.micro"
+  subnet_id          = module.vpc.public_subnets[0]
+  security_group_ids = [module.web_sg.sg_id]
+  instance_name      = "terraweek-web"
+  tags               = local.common_tags
+}
+
+module "api_server" {
+  source             = "./modules/ec2-instance"
+  ami_id             = data.aws_ami.amazon_linux.id
+  instance_type      = "t2.micro"
+  subnet_id          = module.vpc.public_subnets[0]
+  security_group_ids = [module.web_sg.sg_id]
+  instance_name      = "terraweek-api"
+  tags               = local.common_tags
+}
 ```
-Run `terraform plan` -- Terraform no longer knows about the bucket, but it still exists in AWS.
 
-3. **Re-import it** to bring it back:
+3. Run:
 ```bash
-terraform import aws_s3_bucket.logs_bucket terraweek-import-test-<yourname>
+terraform init     # Downloads the registry module
+terraform plan
+terraform apply
 ```
 
-**Document:** When would you use `state mv` in a real project? When would you use `state rm`?
+4. Compare: how many resources did the VPC module create vs your hand-written VPC from Day 62?
 
-In a real-world production project, you use `terraform state mv` when you want to rename or reorganize code without destroying real infrastructure, while you use `terraform state rm` when you want Terraform to stop managing a resource entirely without deleting it.
+**Document:** Where does Terraform download registry modules to? Check `.terraform/modules/`.
+
+The official VPC module creates around 10–15+ individual underlying resources (VPC, public/private subnets, Internet Gateway, route tables, route table associations, default security groups, network ACLs, etc.), whereas a basic hand-written VPC setup typically only creates 3–5 core resources.
+
+Terraform downloads public registry modules locally into the hidden `.terraform/modules/` directory in your workspace root.
 
 ---
 
-### ✅ Task 6 : Built-in Functions and Conditional Expressions
+### ✅ Task 6 : Module Versioning and Best Practices
 
 1. Pin your registry module version explicitly:
    - `version = "5.1.0"` -- exact version
