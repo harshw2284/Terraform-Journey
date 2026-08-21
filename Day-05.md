@@ -208,43 +208,133 @@ This is your first time using a `dynamic` block -- it loops over a list to gener
 
 ### ✅ Task 4 : Call Your Modules from Root
 
-Not everything starts with Terraform. Sometimes resources already exist in AWS and you need to bring them under Terraform management.
+In the root `main.tf`, wire everything together:
 
-1. Manually create an S3 bucket in the AWS console -- name it `terraweek-import-test-<yourname>`
-2. Write a `resource "aws_s3_bucket"` block in your config for this bucket (just the bucket name, nothing else)
+1. Create a VPC and subnet directly (or reuse your Day 2 config)
 
 ```hcl
-resource "aws_s3_bucket" "imported" {
-  bucket = "terraweek-import-test-harsh"
+data "aws_ami" "amazon_linux" {
+  most_recent = true
+  owners      = ["amazon"]
+
+  filter {
+    name   = "name"
+    values = ["amzn2-ami-hvm-*-x86_64-gp2"]
+  }
+}
+
+locals {
+  common_tags = {
+    Environment = "dev"
+    Project     = "terraweek"
+    ManagedBy   = "terraform"
+  }
+}
+
+resource aws_vpc main {
+    cidr_block  = "10.0.0.0/16"
+    tags = merge(
+    {
+    Name = "main-vpc"
+    },
+    local.common_tags
+    )
+}
+
+resource aws_subnet public {
+    cidr_block = "10.0.1.0/24"
+    vpc_id     = aws_vpc.main.id
+    map_public_ip_on_launch = true
+  tags = merge({
+    Name = "my-subnet"
+  },
+  local.common_tags
+  )
+}
+
+module "web_sg" {
+  source        = "./modules/security-group"
+  vpc_id        = aws_vpc.main.id
+  sg_name       = "terraweek-web-sg"
+  ingress_ports = [22, 80, 443]
+  tags          = local.common_tags
+  
+}
+
+module "web_server" {
+  source             = "./modules/ec2-instance"
+  ami_id             = data.aws_ami.amazon_linux.id
+  instance_type      = "t2.micro"
+  subnet_id          = aws_subnet.public.id
+  security_group_ids = [module.web_sg.sg_id]
+  instance_name      = "terraweek-web"
+  tags               = local.common_tags
+}
+
+module "api_server" {
+  source             = "./modules/ec2-instance"
+  ami_id             = data.aws_ami.amazon_linux.id
+  instance_type      = "t2.micro"
+  subnet_id          = aws_subnet.public.id
+  security_group_ids = [module.web_sg.sg_id]
+  instance_name      = "terraweek-api"
+  tags               = local.common_tags
 }
 ```
 
-3. Import it:
-```bash
-terraform import aws_s3_bucket.imported terraweek-import-test-<yourname>
-terraform import aws_s3_bucket.imported terraweek-import-test-harsh
+2. Call the security group module:
+```hcl
+module "web_sg" {
+  source        = "./modules/security-group"
+  vpc_id        = aws_vpc.main.id
+  sg_name       = "terraweek-web-sg"
+  ingress_ports = [22, 80, 443]
+  tags          = local.common_tags
+}
 ```
 
-<img width="1007" height="344" alt="Screenshot 2026-08-19 224358" src="https://github.com/user-attachments/assets/006b3a57-ef84-4de9-931f-3b483afd988c" />
+3. Call the EC2 module -- deploy **two instances** with different names using the same module:
+```hcl
+module "web_server" {
+  source             = "./modules/ec2-instance"
+  ami_id             = data.aws_ami.amazon_linux.id
+  instance_type      = "t2.micro"
+  subnet_id          = aws_subnet.public.id
+  security_group_ids = [module.web_sg.sg_id]
+  instance_name      = "terraweek-web"
+  tags               = local.common_tags
+}
 
+module "api_server" {
+  source             = "./modules/ec2-instance"
+  ami_id             = data.aws_ami.amazon_linux.id
+  instance_type      = "t2.micro"
+  subnet_id          = aws_subnet.public.id
+  security_group_ids = [module.web_sg.sg_id]
+  instance_name      = "terraweek-api"
+  tags               = local.common_tags
+}
+```
 
-4. Run `terraform plan`:
-   - If you see "No changes" -- the import was perfect
-   - If you see changes -- your config does not match reality. Update your config to match, then plan again until you get "No changes"
+4. Add root outputs that reference module outputs:
+```hcl
+output "web_server_ip" {
+  value = module.web_server.public_ip
+}
 
-5. Run `terraform state list` -- the imported bucket should now appear alongside your other resources
+output "api_server_ip" {
+  value = module.api_server.public_ip
+}
+```
 
-<img width="723" height="102" alt="image" src="https://github.com/user-attachments/assets/7228c3a9-af99-47d8-9fd0-0060a34366c7" />
+5. Apply:
+```bash
+terraform init    # Downloads/links the local modules
+terraform plan    # Should show all resources from both module calls
+terraform apply
+```
 
-**Document:** What is the difference between `terraform import` and creating a resource from scratch?
-
-The primary difference lies in where the infrastructure originates and how Terraform associates it with state:
-
-Creating a Resource from Scratch (`terraform apply`):
-You write the HCL configuration block, and Terraform creates a brand-new cloud resource in AWS (or another provider) upon running `terraform apply`. Terraform automatically creates the physical infrastructure and maps it to your state file simultaneously.
-
-Importing an Existing Resource (`terraform import`):
-The cloud resource already exists outside of Terraform management (created manually via AWS Console, CLI, or another tool). Running `terraform import` updates your Terraform state file so Terraform becomes aware of the existing resource and its current attributes. However, `terraform import` does not generate the code for you; you must write the corresponding resource block in your `.tf` file manually so state and configuration match.
+**Verify:** Two EC2 instances running, same security group, different names. Check the AWS console.
 
 ---
 
