@@ -225,7 +225,7 @@ In a real-world production project, you use `terraform state mv` when you want t
 
 ---
 
-### ✅ Task 6 : Built-in Functions and Conditional Expressions
+### ✅ Task 6 : Simulate and Fix State Drift
 
 State drift happens when someone changes infrastructure outside of Terraform -- through the AWS console, CLI, or another tool.
 
