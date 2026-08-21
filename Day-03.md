@@ -530,7 +530,30 @@ instance_type = var.environment == "prod" ? "t3.small" : "t2.micro"
 
 Apply with `environment = "prod"` and verify the instance type changes.
 
+```hcl
+resource "aws_instance" "my-instance" {
+  ami = data.aws_ami.amazon_linux.id
+  subnet_id = aws_subnet.my-subnet.id
+  instance_type = var.instance_type == "prod" ? "t3.small" : "t.micro"      # Conditional expression
+  associate_public_ip_address = true
+  lifecycle {
+    create_before_destroy = true
+  }
+  tags = merge(local.common_tags, {
+    Name = "${local.name_prefix}-server"
+  },
+  var.extra_tags 
+ )
+}
+```
+
 **Document:** Pick five functions you find most useful and explain what each does.
+
+1. **lookup** : retrieves the value of a single element from a map, given its key
+2. **length** : returns the length of a given list, map, or string
+3. **range** : generates a list of numbers using a start value, a limit value, and a step value
+4. **file** : reads the contents of a file at the given path and returns them as a string
+5. **cidrsubnet** : calculates a subnet address within given IP network address prefix
 
 ---
 
