@@ -106,7 +106,7 @@ terraform {
     bucket         = "terraweek-state-<yourname>"
     key            = "dev/terraform.tfstate"
     region         = "ap-south-1"
-    use_lockfile   = true
+    use_lockfile   = true                               # Used for state locking
     encrypt        = true
   }
 }
